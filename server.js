@@ -84,6 +84,24 @@ app.get('/stock/:productId', (req, res) => {
   }
 
   res.status(200).json(stock);
+});// Stock availability status endpoint
+app.get('/stock/:productId/status', (req, res) => {
+  const productId = req.params.productId;
+
+  const stock = stockCache[productId];
+
+  if (!stock) {
+    return res.status(404).json({
+      message: 'Product not found'
+    });
+  }
+
+  res.status(200).json({
+    productId: stock.productId,
+    productName: stock.productName,
+    inStock: stock.quantity > 0,
+    quantity: stock.quantity
+  });
 });
 
 app.listen(PORT, () => {
