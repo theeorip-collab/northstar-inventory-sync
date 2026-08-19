@@ -1,73 +1,58 @@
 const express = require('express');
-const crypto = require('crypto');
 
 const app = express();
+
 const PORT = 3000;
+const WAREHOUSE_API = 'http://localhost:4000/warehouse/inventory';
 
-const WEBHOOK_SECRET = 'northstar-demo-secret';
-
-// In-memory stock cache
+// In-memory inventory cache
 const stockCache = {};
 
-// Lets Express read JSON requests
 app.use(express.json());
 
 // Health check
 app.get('/', (req, res) => {
-  res.send('NorthStar Inventory Sync Service is running');
+  res.send('NorthStar Inventory Polling Service is running');
 });
 
-// Inventory webhook
-app.post('/webhook', (req, res) => {
-  const receivedSignature = req.headers['x-webhook-signature'];
-  const payload = JSON.stringify(req.body);
+// Poll the warehouse API
+async function syncInventory() {
+  try {
+    console.log('🔄 Polling warehouse inventory...');
 
-  const expectedSignature = crypto
-    .createHmac('sha256', WEBHOOK_SECRET)
-    .update(payload)
-    .digest('hex');
+    const response = await fetch(WAREHOUSE_API);
 
-  // 1. Verify webhook signature
-  if (receivedSignature !== expectedSignature) {
-    console.log('❌ Invalid signature');
-    return res.status(401).send('Unauthorized');
+    if (!response.ok) {
+      throw new Error(`Warehouse API returned ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    // Update cache with warehouse inventory
+    data.inventory.forEach(product => {
+      stockCache[product.productId] = {
+        productId: product.productId,
+        productName: product.productName,
+        quantity: product.quantity,
+        warehouse: product.warehouse,
+        lastUpdated: new Date().toISOString()
+      };
+    });
+
+    console.log('✅ Inventory synchronized');
+    console.log(stockCache);
+
+  } catch (error) {
+    console.error('❌ Warehouse polling failed:', error.message);
   }
+}
 
-  // 2. Read inventory data
-  const { productId, productName, quantity, warehouse } = req.body;
+// Manual sync endpoint for testing
+app.post('/sync', async (req, res) => {
+  await syncInventory();
 
-  // 3. Validate required fields
-  if (
-    !productId ||
-    !productName ||
-    quantity === undefined ||
-    !warehouse
-  ) {
-    console.log('❌ Missing required inventory fields');
-    return res.status(400).send('Bad Request: Missing required inventory fields');
-  }
-
-  // 4. Validate quantity
-  if (typeof quantity !== 'number' || quantity < 0) {
-    console.log('❌ Invalid quantity');
-    return res.status(400).send('Bad Request: Invalid quantity');
-  }
-
-  // 5. Update the stock cache
-  stockCache[productId] = {
-    productId,
-    productName,
-    quantity,
-    warehouse,
-    lastUpdated: new Date().toISOString()
-  };
-
-  console.log('✅ Inventory synchronized!');
-  console.log('Stock:', stockCache[productId]);
-
-  res.status(200).json({
-    message: 'Inventory synchronized successfully',
-    stock: stockCache[productId]
+  res.json({
+    message: 'Inventory synchronization completed'
   });
 });
 
@@ -84,7 +69,9 @@ app.get('/stock/:productId', (req, res) => {
   }
 
   res.status(200).json(stock);
-});// Stock availability status endpoint
+});
+
+// Stock availability endpoint
 app.get('/stock/:productId/status', (req, res) => {
   const productId = req.params.productId;
 
@@ -104,6 +91,16 @@ app.get('/stock/:productId/status', (req, res) => {
   });
 });
 
+// Start polling every 5 minutes
+const POLL_INTERVAL = 5 * 60 * 1000;
+
+setInterval(syncInventory, POLL_INTERVAL);
+
 app.listen(PORT, () => {
-  console.log(`NorthStar Inventory Sync Service running on http://localhost:${PORT}`);
+  console.log(
+    `NorthStar Inventory Polling Service running on http://localhost:${PORT}`
+  );
+
+  // Perform an initial synchronization when the service starts
+  syncInventory();
 });
